@@ -1,9 +1,13 @@
 import json
 import httpx
-from browser import BrowserController
-from tools import TOOLS
+from .browser import BrowserController
+from .tools import TOOLS
+from dotenv import load_dotenv
+import os
 
-OPENROUTER_API_KEY = "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"
+load_dotenv()
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 MODEL = "google/gemini-2.0-flash-exp:free"
@@ -43,7 +47,7 @@ class BrowserAgent:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/local/browser-agent",
+            "HTTP-Referer": "https://github.com/dipakkhade/browser-agent",
             "X-Title": "Browser Agent",
         }
         payload = {

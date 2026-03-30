@@ -9,7 +9,7 @@ Protocol (newline-delimited JSON):
 import asyncio
 import json
 import os
-from agent import BrowserAgent
+from .agent import BrowserAgent
 
 HOST = "127.0.0.1"
 PORT = 9000
