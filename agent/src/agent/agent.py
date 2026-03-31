@@ -1,16 +1,18 @@
 import json
 import httpx
-from .browser import BrowserController
-from .tools import TOOLS
+from agent.browser import BrowserController
+from agent.tools import TOOLS
 from dotenv import load_dotenv
 import os
 
 load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+print('---------------------------OPENROUTER_API_KEY-----------------------', OPENROUTER_API_KEY)
+
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-MODEL = "google/gemini-2.0-flash-exp:free"
+MODEL = "openrouter/free"
 
 SYSTEM_PROMPT = """You are a browser automation agent controlling a real Chromium browser.
 
@@ -57,8 +59,15 @@ class BrowserAgent:
             "tool_choice": "auto",
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + self.messages,
         }
+
         async with httpx.AsyncClient(timeout=60) as client:
+            print("REQUEST URL:", OPENROUTER_URL)
+
             resp = await client.post(OPENROUTER_URL, headers=headers, json=payload)
+
+            print("STATUS CODE:", resp.status_code)
+            print("RESPONSE TEXT:", resp.text)
+
             resp.raise_for_status()
             return resp.json()
 
