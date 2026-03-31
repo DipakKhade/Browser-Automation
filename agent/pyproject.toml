@@ -15,3 +15,6 @@ agent-server = "agent.main:run"
 
 [tool.uv]
 package = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
