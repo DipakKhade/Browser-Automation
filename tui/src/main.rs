@@ -13,15 +13,16 @@ use ratatui::{
 };
 use serde::{Deserialize, Serialize};
 use std::io;
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::TcpStream,
-    sync::mpsc,
-};
 
 #[derive(Serialize)]
-struct Request {
+struct TaskRequest {
     task: String,
+}
+
+#[derive(Deserialize)]
+struct TaskResponse {
+    task_id: Option<usize>,
+    error: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -29,7 +30,6 @@ struct Request {
 enum ServerMessage {
     Log { log: String },
     Done { done: String },
-    Error { error: String },
 }
 
 #[derive(Clone, PartialEq)]
@@ -62,8 +62,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Resul
         "Ctrl+C to quit".into(),
     ];
     let mut status = Status::Idle;
-
-    let (tx, mut rx) = mpsc::unbounded_channel::<ServerMessage>();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
 
     loop {
         while let Ok(msg) = rx.try_recv() {
@@ -72,10 +71,6 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Resul
                 ServerMessage::Done { done } => {
                     logs.push(format!("Done: {}", done));
                     status = Status::Done(done);
-                }
-                ServerMessage::Error { error } => {
-                    logs.push(format!("Error: {}", error));
-                    status = Status::Error(error);
                 }
             }
         }
@@ -136,10 +131,11 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Resul
                         status = Status::Running;
 
                         let tx2 = tx.clone();
-                        let task2 = task.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = send_task(task2, tx2).await {
-                                eprintln!("send_task error: {e}");
+                            if let Err(e) = send_task(task, tx2.clone()).await {
+                                let _ = tx2.send(ServerMessage::Log { 
+                                    log: format!("Error: {}", e) 
+                                });
                             }
                         });
                     }
@@ -158,28 +154,53 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Resul
     Ok(())
 }
 
-async fn send_task(task: String, tx: mpsc::UnboundedSender<ServerMessage>) -> io::Result<()> {
-    let stream = TcpStream::connect("127.0.0.1:9000").await.map_err(|e| {
-        let _ = tx.send(ServerMessage::Error {
-            error: format!("Cannot connect to agent server: {e}. Is main.py running?"),
-        });
-        e
-    })?;
-
-    let (reader_half, mut writer_half) = stream.into_split();
-    let request = serde_json::to_string(&Request { task }).unwrap() + "\n";
-    writer_half.write_all(request.as_bytes()).await?;
-
-    let mut lines = BufReader::new(reader_half).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
-        match serde_json::from_str::<ServerMessage>(&line) {
-            Ok(msg) => {
-                let _ = tx.send(msg);
-            }
-            Err(_) => {
-                let _ = tx.send(ServerMessage::Log { log: line });
+async fn send_task(task: String, tx: tokio::sync::mpsc::UnboundedSender<ServerMessage>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let client = reqwest::Client::new();
+    
+    let response = client
+        .post("http://127.0.0.1:9000/task")
+        .json(&TaskRequest { task })
+        .send()
+        .await?;
+    
+    let task_resp: TaskResponse = response.json().await?;
+    
+    if let Some(error) = task_resp.error {
+        let _ = tx.send(ServerMessage::Log { log: format!("Error: {}", error) });
+        return Ok(());
+    }
+    
+    let task_id = task_resp.task_id.ok_or("No task_id returned")?;
+    
+    let stream_url = format!("http://127.0.0.1:9000/task/{}/stream", task_id);
+    
+    let response = client
+        .get(&stream_url)
+        .send()
+        .await?;
+    
+    let mut stream = response.bytes_stream();
+    
+    let mut buffer = String::new();
+    
+    use futures_util::StreamExt;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if let Ok(text) = String::from_utf8(chunk.to_vec()) {
+            buffer.push_str(&text);
+            
+            while let Some(pos) = buffer.find('\n') {
+                let line = buffer[..pos].to_string();
+                buffer = buffer[pos + 1..].to_string();
+                
+                if let Some(stripped) = line.strip_prefix("data: ") {
+                    if let Ok(msg) = serde_json::from_str::<ServerMessage>(stripped) {
+                        let _ = tx.send(msg);
+                    }
+                }
             }
         }
     }
+    
     Ok(())
 }
