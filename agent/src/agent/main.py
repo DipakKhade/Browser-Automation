@@ -11,6 +11,9 @@ task_id_counter = 0
 @app.route("/task", methods=["POST"])
 def create_task():
     global task_id_counter
+    print('----------------------------------control at /task ----------------------------------')
+    print(f'tasks -----------------{tasks}')
+    print(f'task_id_counter --------------{task_id_counter}')
     data = request.get_json()
     task = data.get("task", "").strip()
     
@@ -43,11 +46,12 @@ def create_task():
 
 @app.route("/task/<int:task_id>/stream")
 def stream_task(task_id):
+    print('----------------------------------task/<int:task_id>/stream----------------------------------')
     if task_id not in tasks:
         return {"error": "task not found"}, 404
     
     task_data = tasks[task_id]
-    
+    print(f'task data ---------------------{task_data}')
     def generate():
         while True:
             try:

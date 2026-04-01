@@ -8,11 +8,10 @@ import os
 load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-print('---------------------------OPENROUTER_API_KEY-----------------------', OPENROUTER_API_KEY)
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-MODEL = "openrouter/free"
+MODEL = "google/gemma-3-27b-it:free"
 
 SYSTEM_PROMPT = """You are a browser automation agent controlling a real Chromium browser.
 
