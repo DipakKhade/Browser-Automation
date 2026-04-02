@@ -6,13 +6,20 @@ from dotenv import load_dotenv
 import os
 import time
 
-load_dotenv()
+load_dotenv(dotenv_path='/Users/dipakkhade/projects/Browser-Automation/agent/.env')
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+# OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-MODEL = "google/gemma-3-27b-it:free"
+# MODEL = "google/gemma-3-27b-it:free"
+MODELS = [
+    "nvidia/nemotron-nano-12b-v2-vl:free",
+    "google/gemma-3-12b-it:free",
+    "openrouter/free",
+    "google/gemma-3-27b-it:free",
+]
 
 SYSTEM_PROMPT = """You are a browser automation agent controlling a real Chromium browser.
 
@@ -62,18 +69,20 @@ class BrowserAgent:
         self.emit_log = emit_log
         self.browser = BrowserController()
         self.messages = []
-        import os
-        self.api_key = os.environ.get("OPENROUTER_API_KEY", OPENROUTER_API_KEY)
+        self.api_key = OPENROUTER_API_KEY
+        print('this is my key----', self.api_key)
 
     async def start(self):
         await self.emit_log("Starting browser...")
 
         await self.browser.start()
-        time.sleep(10)
+        time.sleep(2)
         await self.emit_log("Browser ready.")
 
     async def stop(self):
         await self.browser.stop()
+
+   
 
     async def _call_llm(self) -> dict:
         headers = {
@@ -82,16 +91,22 @@ class BrowserAgent:
             "HTTP-Referer": "https://github.com/dipakkhade/browser-agent",
             "X-Title": "Browser Agent",
         }
-        payload = {
-            "model": MODEL,
-            "max_tokens": 1024,
-            "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + self.messages,
-        }
 
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(OPENROUTER_URL, headers=headers, json=payload)
-            resp.raise_for_status()
-            return resp.json()
+        for model in MODELS:
+            payload = {
+                "model": model,
+                "max_tokens": 1024,
+                "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + self.messages,
+            }
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(OPENROUTER_URL, headers=headers, json=payload)
+                if resp.status_code == 429:
+                    await self.emit_log(f"Model {model} rate limited, trying next...")
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+
+        raise Exception("All models rate limited. Try again later.")
 
     def _parse_action(self, content: str) -> tuple[str, dict]:
         content = content.strip()
@@ -173,6 +188,7 @@ class BrowserAgent:
                 }
             ]
 
+            # print('============-================>>> user_content=======', user_content)
             self.messages.append({"role": "user", "content": user_content})
 
             try:
