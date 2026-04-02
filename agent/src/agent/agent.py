@@ -1,9 +1,10 @@
 import json
 import httpx
+import re
 from agent.browser import BrowserController
-from agent.tools import TOOLS
 from dotenv import load_dotenv
 import os
+import time
 
 load_dotenv()
 
@@ -20,12 +21,40 @@ Each turn you receive:
 - A screenshot of what the browser currently shows
 - A numbered list of visible interactive elements with their (x, y) coordinates
 
+You must respond with ONLY a JSON object in this exact format (no other text):
+
+{
+  "action": "action_name",
+  "args": {
+    // action-specific arguments
+  }
+}
+
+Available actions:
+
+1. navigate
+   args: {"url": "https://..."}
+
+2. click
+   args: {"x": 100, "y": 200, "reason": "why clicking here"}
+
+3. type_text
+   args: {"x": 100, "y": 200, "text": "text to type"}
+
+4. press_key
+   args: {"key": "Enter|Tab|Escape|ArrowDown|etc"}
+
+5. scroll
+   args: {"direction": "up|down", "amount": 400}
+
+6. done
+   args: {"result": "summary of what was accomplished"}
+
 Rules:
-- Call exactly ONE tool per turn.
-- Always fill in the `reason` field explaining your decision.
-- If a page is loading or the state looks the same after your last action, wait (call scroll down then re-observe).
-- When the task is fully complete, call `done` with a clear summary of what was accomplished.
-- If you cannot complete the task after 5 attempts, call `done` with an explanation of what blocked you.
+- Respond with ONLY the JSON object, no markdown, no explanation.
+- Always provide a reason when clicking.
+- When the task is fully complete, use the "done" action.
+- If you cannot complete the task after 5 attempts, use "done" with an explanation.
 """
 
 class BrowserAgent:
@@ -38,7 +67,9 @@ class BrowserAgent:
 
     async def start(self):
         await self.emit_log("Starting browser...")
+
         await self.browser.start()
+        time.sleep(10)
         await self.emit_log("Browser ready.")
 
     async def stop(self):
@@ -54,23 +85,31 @@ class BrowserAgent:
         payload = {
             "model": MODEL,
             "max_tokens": 1024,
-            "tools": TOOLS,
-            "tool_choice": "auto",
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + self.messages,
         }
 
-        async with httpx.AsyncClient(timeout=60) as client:
-            print("REQUEST URL:", OPENROUTER_URL)
-
+        async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(OPENROUTER_URL, headers=headers, json=payload)
-
-            print("STATUS CODE:", resp.status_code)
-            print("RESPONSE TEXT:", resp.text)
-
             resp.raise_for_status()
             return resp.json()
 
-    async def _execute_tool(self, name: str, args: dict) -> str:
+    def _parse_action(self, content: str) -> tuple[str, dict]:
+        content = content.strip()
+        
+        json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(1)
+        else:
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                content = json_match.group(0)
+        
+        parsed = json.loads(content)
+        action = parsed.get("action", "")
+        args = parsed.get("args", {})
+        return action, args
+
+    async def _execute_action(self, name: str, args: dict) -> str:
         try:
             if name == "navigate":
                 await self.emit_log(f"Navigate -> {args['url']}")
@@ -95,11 +134,12 @@ class BrowserAgent:
             elif name == "done":
                 return "DONE"
             else:
-                return f"Unknown tool: {name}"
+                return f"Unknown action: {name}"
         except Exception as e:
             return f"Error in {name}: {e}"
 
     async def run(self, task: str, max_steps: int = 25) -> str:
+        print('inside the run run========', task)
         await self.emit_log(f"Task: {task}")
         self.messages = []
 
@@ -107,6 +147,7 @@ class BrowserAgent:
             await self.emit_log(f"\n-- Step {step} --")
 
             state = await self.browser.get_state()
+            print('=====state=====', state['url'])
             await self.emit_log(f"URL: {state['url'][:70]}")
 
             elements_text = "\n".join(
@@ -136,34 +177,37 @@ class BrowserAgent:
 
             try:
                 response = await self._call_llm()
+                print('llm response -----------', response)
             except Exception as e:
                 await self.emit_log(f"LLM error: {e}")
                 break
 
             choice = response["choices"][0]
             message = choice["message"]
-            self.messages.append(message)
+            content = message.get("content", "")
 
-            tool_calls = message.get("tool_calls") or []
-            if not tool_calls:
-                text = message.get("content", "No tool call returned.")
-                await self.emit_log(f"{text}")
-                return text
+            self.messages.append({"role": "assistant", "content": content})
 
-            tc = tool_calls[0]
-            tool_name = tc["function"]["name"]
-            tool_args = json.loads(tc["function"]["arguments"])
+            try:
+                action, action_args = self._parse_action(content)
+            except json.JSONDecodeError as e:
+                await self.emit_log(f"Failed to parse JSON: {e}")
+                await self.emit_log(f"Response: {content[:200]}")
+                break
 
-            result = await self._execute_tool(tool_name, tool_args)
+            if not action:
+                await self.emit_log(f"No action in response: {content[:100]}")
+                break
+
+            result = await self._execute_action(action, action_args)
 
             self.messages.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
+                "role": "user",
                 "content": result,
             })
 
             if result == "DONE":
-                final = tool_args.get("result", "Task complete.")
+                final = action_args.get("result", "Task complete.")
                 await self.emit_log(f"\nDone: {final}")
                 return final
 
