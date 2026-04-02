@@ -2,6 +2,7 @@ import json
 import queue
 from flask import Flask, request, Response
 from agent.agent import BrowserAgent
+import asyncio
 
 app = Flask(__name__)
 
@@ -39,7 +40,6 @@ def create_task():
             await agent.stop()
             tasks[task_id]["completed"] = True
     
-    import asyncio
     asyncio.run(run_agent())
     
     return {"task_id": task_id}
@@ -67,7 +67,7 @@ def stream_task(task_id):
     return Response(generate(), mimetype="text/event-stream")
 
 def run():
-    app.run(host="127.0.0.1", port=9000, threaded=True)
+    app.run(host="127.0.0.1", port=9000, threaded=True, use_reloader=False)
 
 if __name__ == "__main__":
     run()
