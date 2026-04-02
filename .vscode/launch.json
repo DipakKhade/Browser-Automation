@@ -1,0 +1,15 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Run Agent",
+        "type": "debugpy",
+        "request": "launch",
+        "module": "agent.main",
+        "python": "${workspaceFolder}/agent/.venv/bin/python",
+        "cwd": "${workspaceFolder}/agent",
+        "justMyCode": false,
+        "console": "integratedTerminal"
+      }
+    ]
+  }
